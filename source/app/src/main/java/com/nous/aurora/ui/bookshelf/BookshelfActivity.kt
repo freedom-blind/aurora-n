@@ -19,6 +19,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.nous.aurora.AuroraApp
@@ -39,7 +40,7 @@ class BookshelfActivity : AppCompatActivity() {
     private lateinit var binding: ActivityBookshelfBinding
     private val bookAdapter = BookAdapter(
         onBookClick = { book -> openBook(book) },
-        onBookLongClick = { book -> removeFromShelf(book) }
+        onBookLongClick = { book -> showBookOptions(book) }
     )
     private val fileAdapter = FileBrowserAdapter(
         onDirClick = { entry -> navigateToDir(entry.file) },
@@ -58,7 +59,7 @@ class BookshelfActivity : AppCompatActivity() {
         LocaleManager.applyLocale(this)
         binding = ActivityBookshelfBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        title = "书架"
+        title = "\u4E66\u67B6"
 
         binding.recyclerView.layoutManager = LinearLayoutManager(this)
 
@@ -108,7 +109,7 @@ class BookshelfActivity : AppCompatActivity() {
         }
     }
 
-    // ── Bookshelf ──
+    // Bookshelf
 
     private fun showBookshelf() {
         isImportMode = false
@@ -128,13 +129,75 @@ class BookshelfActivity : AppCompatActivity() {
         }
     }
 
+    private fun showBookOptions(book: Book) {
+        val items = arrayOf("\u4ECE\u4E66\u67B6\u79FB\u9664", "\u4ECE\u8BBE\u5907\u5220\u9664", "\u5206\u4EAB\u6587\u4EF6")
+        AlertDialog.Builder(this)
+            .setTitle(book.title)
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> removeFromShelf(book)
+                    1 -> deleteFromDevice(book)
+                    2 -> shareFile(book)
+                }
+            }
+            .setNegativeButton("\u53D6\u6D88", null)
+            .show()
+    }
+
     private fun removeFromShelf(book: Book) {
         lifecycleScope.launch(Dispatchers.IO) {
             db.setFavorite(book.id, false)
             withContext(Dispatchers.Main) {
                 loadBooks()
-                Toast.makeText(this@BookshelfActivity, "已从书架移除", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@BookshelfActivity, "\u5DF2\u4ECE\u4E66\u67B6\u79FB\u9664", Toast.LENGTH_SHORT).show()
             }
+        }
+    }
+
+    private fun deleteFromDevice(book: Book) {
+        AlertDialog.Builder(this)
+            .setTitle("\u786E\u8BA4\u5220\u9664")
+            .setMessage("\u786E\u5B9A\u8981\u5220\u9664 ${book.title} \u5417\uFF1F\u6587\u4EF6\u5C06\u4ECE\u8BBE\u5907\u4E2D\u6C38\u4E45\u5220\u9664\u3002")
+            .setPositiveButton("\u5220\u9664") { _, _ ->
+                val file = File(book.filePath)
+                if (file.exists() && file.delete()) {
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        db.deleteBook(book.id)
+                        withContext(Dispatchers.Main) {
+                            loadBooks()
+                            Toast.makeText(this@BookshelfActivity, "\u5DF2\u5220\u9664", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                } else {
+                    Toast.makeText(this, "\u5220\u9664\u5931\u8D25", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton("\u53D6\u6D88", null)
+            .show()
+    }
+
+    private fun shareFile(book: Book) {
+        val file = File(book.filePath)
+        if (!file.exists()) {
+            Toast.makeText(this, "\u6587\u4EF6\u4E0D\u5B58\u5728", Toast.LENGTH_SHORT).show()
+            return
+        }
+        try {
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "*/*"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(shareIntent, "\u5206\u4EAB ${book.title}"))
+        } catch (e: Exception) {
+            // fallback to Uri.fromFile
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "*/*"
+                putExtra(Intent.EXTRA_STREAM, Uri.fromFile(file))
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(shareIntent, "\u5206\u4EAB ${book.title}"))
         }
     }
 
@@ -147,7 +210,7 @@ class BookshelfActivity : AppCompatActivity() {
         startActivity(intent)
     }
 
-    // ── Import ──
+    // Import
 
     private fun startImport() {
         checkStoragePermission {
@@ -171,9 +234,9 @@ class BookshelfActivity : AppCompatActivity() {
             binding.progressBar.visibility = View.GONE
             if (book != null) {
                 db.setFavorite(book.id, true)
-                Toast.makeText(this@BookshelfActivity, "已添加到书架: ${book.title}", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@BookshelfActivity, "\u5DF2\u6DFB\u52A0\u5230\u4E66\u67B6: ${book.title}", Toast.LENGTH_SHORT).show()
             } else {
-                Toast.makeText(this@BookshelfActivity, "无法导入此文件", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@BookshelfActivity, "\u65E0\u6CD5\u5BFC\u5165\u6B64\u6587\u4EF6", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -219,7 +282,7 @@ class BookshelfActivity : AppCompatActivity() {
         book.copy(id = id)
     }
 
-    // ── File browser ──
+    // File browser
 
     private fun loadCurrentDirectory() {
         lifecycleScope.launch {
@@ -235,7 +298,7 @@ class BookshelfActivity : AppCompatActivity() {
             binding.btnUpDir.isEnabled = currentDir.parentFile != null
             fileAdapter.submitList(entries)
             binding.tvEmpty.visibility = if (entries.isEmpty()) View.VISIBLE else View.GONE
-            if (entries.isEmpty()) binding.tvEmpty.text = "此目录为空或没有支持的电子书"
+            if (entries.isEmpty()) binding.tvEmpty.text = "\u6B64\u76EE\u5F55\u4E3A\u7A7A\u6216\u6CA1\u6709\u652F\u6301\u7684\u7535\u5B50\u4E66"
         }
     }
 
@@ -253,10 +316,10 @@ class BookshelfActivity : AppCompatActivity() {
         }
     }
 
-    // ── Sort ──
+    // Sort
 
     private fun setupSortSpinner() {
-        val sortOptions = arrayOf("最近阅读", "书名", "作者", "修改时间")
+        val sortOptions = arrayOf("\u6700\u8FD1\u9605\u8BFB", "\u4E66\u540D", "\u4F5C\u8005", "\u4FEE\u6539\u65F6\u95F4")
         val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, sortOptions)
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         binding.spinnerSort.adapter = adapter
@@ -272,12 +335,12 @@ class BookshelfActivity : AppCompatActivity() {
         }
         binding.btnSortOrder.setOnClickListener {
             sortAscending = !sortAscending
-            binding.btnSortOrder.text = if (sortAscending) "升序" else "降序"
+            binding.btnSortOrder.text = if (sortAscending) "\u5347\u5E8F" else "\u964D\u5E8F"
             if (!isImportMode) loadBooks()
         }
     }
 
-    // ── Permission ──
+    // Permission
 
     private fun checkStoragePermission(onGranted: () -> Unit) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -285,13 +348,13 @@ class BookshelfActivity : AppCompatActivity() {
                 onGranted()
             } else {
                 AlertDialog.Builder(this)
-                    .setTitle("需要文件访问权限")
-                    .setMessage("Aurora 需要访问存储空间才能浏览电子书文件。请授予所有文件访问权限。")
-                    .setPositiveButton("去设置") { _, _ ->
+                    .setTitle("\u9700\u8981\u6587\u4EF6\u8BBF\u95EE\u6743\u9650")
+                    .setMessage("Aurora \u9700\u8981\u8BBF\u95EE\u5B58\u50A8\u7A7A\u95F4\u624D\u80FD\u6D4F\u89C8\u7535\u5B50\u4E66\u6587\u4EF6\u3002\u8BF7\u6388\u4E88\u6240\u6709\u6587\u4EF6\u8BBF\u95EE\u6743\u9650\u3002")
+                    .setPositiveButton("\u53BB\u8BBE\u7F6E") { _, _ ->
                         startActivity(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
                             Uri.parse("package:$packageName")))
                     }
-                    .setNegativeButton("取消", null)
+                    .setNegativeButton("\u53D6\u6D88", null)
                     .show()
             }
         } else {
@@ -305,13 +368,13 @@ class BookshelfActivity : AppCompatActivity() {
         }
     }
 
-    // ── Search ──
+    // Search
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(com.nous.aurora.R.menu.bookshelf_menu, menu)
         val searchItem = menu.findItem(com.nous.aurora.R.id.action_search)
         val searchView = searchItem.actionView as SearchView
-        searchView.queryHint = "搜索书名、作者..."
+        searchView.queryHint = "\u641C\u7D22\u4E66\u540D\u3001\u4F5C\u8005..."
         searchView.setOnQueryTextListener(object : SearchView.OnQueryTextListener {
             override fun onQueryTextSubmit(query: String?): Boolean {
                 query?.let { searchBooks(it) }; return true
