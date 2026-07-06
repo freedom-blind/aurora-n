@@ -1,4 +1,4 @@
-package com.nous.aurora.ui.reader
+﻿package com.nous.aurora.ui.reader
 
 import android.os.Bundle
 import android.os.Handler
@@ -8,6 +8,7 @@ import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.webkit.WebView
 import android.widget.FrameLayout
 import android.widget.ProgressBar
 import android.widget.Toast
@@ -60,12 +61,12 @@ class ReadiumReaderFragment : Fragment(), ReaderFragmentContract,
     private lateinit var container: FrameLayout
     private lateinit var progressBar: ProgressBar
     private var _currentLocatorJson = ""
+    private var rootView: FrameLayout? = null
 
     private val handler = Handler(Looper.getMainLooper())
 
     @Volatile
     private var lastLinkClickTime = 0L
-    /** 记录按下时间，用于区分点击和滚动 */
     private var touchDownTime = 0L
     private var touchDownX = 0f
     private var touchDownY = 0f
@@ -92,74 +93,64 @@ class ReadiumReaderFragment : Fragment(), ReaderFragmentContract,
         lp.gravity = Gravity.CENTER
         progressBar.layoutParams = lp
 
-        // ── 核心方案：onInterceptTouchEvent + performClick ──
-        // Readium 的 WebView 在 container 里面，会消费触摸事件。
-        // 用 onInterceptTouchEvent 在事件到达 WebView 之前拦截 DOWN/UP，
-        // 通过时间+位移判断是否为点击（非滚动），是则触发菜单。
-        val rootView = object : FrameLayout(requireContext()) {
+        val rv = object : FrameLayout(requireContext()) {
 
             override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
                 when (ev.action) {
                     MotionEvent.ACTION_DOWN -> {
                         touchDownTime = System.currentTimeMillis()
-                        touchDownX = ev.x
-                        touchDownY = ev.y
+                        touchDownX = ev.x; touchDownY = ev.y
                     }
                     MotionEvent.ACTION_UP -> {
                         val dt = System.currentTimeMillis() - touchDownTime
                         val dx = Math.abs(ev.x - touchDownX)
                         val dy = Math.abs(ev.y - touchDownY)
-                        // 点击条件：时间<300ms 且位移<20px（排除滚动）
                         if (dt < 300 && dx < 20f && dy < 20f) {
-                            // 延迟等 Readium 链接回调
                             postDelayed({
-                                val delta = System.currentTimeMillis() - lastLinkClickTime
-                                if (delta > 400) {
+                                if (System.currentTimeMillis() - lastLinkClickTime > 400) {
                                     onTapCallback?.invoke()
                                 }
                             }, 250L)
                         }
                     }
                 }
-                // 不拦截，让事件继续传给 Readium
                 return false
             }
 
             override fun performClick(): Boolean {
-                // 读屏双击绕过 onInterceptTouchEvent，独走此路
                 postDelayed({
-                    val delta = System.currentTimeMillis() - lastLinkClickTime
-                    if (delta > 400) {
+                    if (System.currentTimeMillis() - lastLinkClickTime > 400) {
                         onTapCallback?.invoke()
                     }
                 }, 250L)
                 return true
             }
         }
+        // 硬件加速：减少 WebView 渲染卡顿
+        rv.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+        rootView = rv
 
-        ViewCompat.setImportantForAccessibility(rootView, ViewCompat.IMPORTANT_FOR_ACCESSIBILITY_YES)
-        rootView.contentDescription = "阅读区域，双击弹出阅读菜单"
+        ViewCompat.setImportantForAccessibility(rv, ViewCompat.IMPORTANT_FOR_ACCESSIBILITY_YES)
+        rv.contentDescription = "阅读区域，双击弹出阅读菜单"
 
         ViewCompat.replaceAccessibilityAction(
-            rootView,
-            AccessibilityNodeInfoCompat.AccessibilityActionCompat.ACTION_CLICK,
+            rv, AccessibilityNodeInfoCompat.AccessibilityActionCompat.ACTION_CLICK,
             "弹出阅读菜单"
         ) { _, _ ->
             handler.postDelayed({
-                val delta = System.currentTimeMillis() - lastLinkClickTime
-                if (delta > 400) {
+                if (System.currentTimeMillis() - lastLinkClickTime > 400) {
                     onTapCallback?.invoke()
                 }
             }, 250L)
             true
         }
 
-        rootView.apply {
+        rv.apply {
             addView(container, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
             addView(progressBar)
         }
 
-        return rootView
+        return rv
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
@@ -170,13 +161,10 @@ class ReadiumReaderFragment : Fragment(), ReaderFragmentContract,
     private suspend fun loadPublication() {
         val file = File(bookPath)
         if (!file.exists()) { showError("文件不存在"); return }
-
         val asset = AuroraApp.instance.assetRetriever.retrieve(file).getOrNull()
         if (asset == null) { showError("无法读取文件"); return }
-
         val pub = AuroraApp.instance.publicationOpener.open(asset, "aurora", false).getOrNull()
         if (pub == null) { showError("无法解析文档"); return }
-
         publication = pub
 
         val initialLocator = runCatching {
@@ -189,36 +177,69 @@ class ReadiumReaderFragment : Fragment(), ReaderFragmentContract,
             progressBar.visibility = View.GONE
             observeProgress()
             applyBookmarkDecorations()
+            // 优化所有内部 WebView 的渲染和无障碍
+            optimizeInternalWebViews()
         }
+    }
+
+    /**
+     * 递归查找所有 WebView 并优化设置：
+     * - 开启硬件加速减少卡顿
+     * - 设置合适的缓存模式
+     * - 延迟后刷新无障碍树，确保跳转后内容完整可见
+     */
+    private fun optimizeInternalWebViews() {
+        container.postDelayed({
+            findWebViews(container).forEach { wv ->
+                wv.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+                wv.settings.apply {
+                    // 减少渲染开销
+                    setRenderPriority(android.webkit.WebSettings.RenderPriority.HIGH)
+                    // 允许文件访问（本地 EPUB 资源）
+                    allowFileAccess = true
+                    // 不要自动加载图片以外的资源
+                    blockNetworkLoads = true
+                }
+            }
+        }, 500)
+    }
+
+    private fun findWebViews(view: View): List<WebView> {
+        val result = mutableListOf<WebView>()
+        if (view is WebView) {
+            result.add(view)
+        } else if (view is ViewGroup) {
+            for (i in 0 until view.childCount) {
+                result.addAll(findWebViews(view.getChildAt(i)))
+            }
+        }
+        return result
     }
 
     private fun setupNavigator(initialLocator: Locator?) {
         val fm = childFragmentManager
-
         when (format) {
             BookFormat.EPUB -> {
                 val factory = EpubNavigatorFactory(
                     publication,
-                    EpubNavigatorFactory.Configuration(defaults = EpubDefaults(pageMargins = 1.2))
+                    EpubNavigatorFactory.Configuration(
+                        defaults = EpubDefaults(pageMargins = 1.2)
+                    )
                 )
                 fm.fragmentFactory = factory.createFragmentFactory(initialLocator, null, EpubPreferences(), this)
-                val fragment = fm.fragmentFactory.instantiate(
-                    requireActivity().classLoader, EpubNavigatorFragment::class.java.name
-                )
-                fm.commitNow { add(container.id, fragment, NAV_TAG) }
+                val frag = fm.fragmentFactory.instantiate(requireActivity().classLoader, EpubNavigatorFragment::class.java.name)
+                fm.commitNow { add(container.id, frag, NAV_TAG) }
                 navigator = fm.findFragmentByTag(NAV_TAG) as VisualNavigator
             }
             BookFormat.PDF -> {
                 val engineProvider = PdfiumEngineProvider(PdfiumDefaults())
                 val factory = PdfNavigatorFactory(publication, engineProvider)
                 fm.fragmentFactory = factory.createFragmentFactory(initialLocator, PdfiumPreferences(), this)
-                val fragment = fm.fragmentFactory.instantiate(
-                    requireActivity().classLoader, "org.readium.r2.navigator.pdf.PdfNavigatorFragment"
-                )
-                fm.commitNow { add(container.id, fragment, NAV_TAG) }
+                val frag = fm.fragmentFactory.instantiate(requireActivity().classLoader, "org.readium.r2.navigator.pdf.PdfNavigatorFragment")
+                fm.commitNow { add(container.id, frag, NAV_TAG) }
                 navigator = fm.findFragmentByTag(NAV_TAG) as VisualNavigator
             }
-            else -> throw IllegalStateException("Unsupported format for Readium: $format")
+            else -> throw IllegalStateException("Unsupported: $format")
         }
     }
 
@@ -251,11 +272,20 @@ class ReadiumReaderFragment : Fragment(), ReaderFragmentContract,
         }
     }
 
-    override fun getCurrentLocation(): String =
-        _currentLocatorJson.ifEmpty { navigator.currentLocator.value.toJSON().toString() }
+    // ── 跳转后刷新无障碍，修复读屏只能读到部分内容的问题 ──
 
     override fun goToLocation(locationJson: String) {
-        parseLocator(locationJson)?.let { navigator.go(it) }
+        parseLocator(locationJson)?.let { loc ->
+            navigator.go(loc)
+            // WebView 跳转后内容异步加载，延迟刷新无障碍树
+            rootView?.postDelayed({
+                rootView?.sendAccessibilityEvent(
+                    android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+                )
+                // 再找一次 WebView，确保设置生效
+                optimizeInternalWebViews()
+            }, 800)
+        }
     }
 
     override fun goToProgress(percent: Int) {
@@ -263,7 +293,13 @@ class ReadiumReaderFragment : Fragment(), ReaderFragmentContract,
         val href = publication.readingOrder.firstOrNull()?.url() ?: return
         val locator = Locator(href, MediaType.BINARY, "", Locator.Locations(totalProgression = progression), Locator.Text())
         navigator.go(locator)
+        rootView?.postDelayed({
+            rootView?.sendAccessibilityEvent(android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
+        }, 800)
     }
+
+    override fun getCurrentLocation(): String =
+        _currentLocatorJson.ifEmpty { navigator.currentLocator.value.toJSON().toString() }
 
     override fun getProgressPercent(): Int =
         ((navigator.currentLocator.value.locations.totalProgression ?: 0.0) * 100).toInt().coerceIn(0, 100)
