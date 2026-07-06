@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="16dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="TXT 解析设置"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:paddingVertical="8dp"
+            android:textColor="?android:attr/textColorPrimary" />
+
+        <CheckBox
+            android:id="@+id/cb_smart_chapter"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:text="TXT 智能分章节"
+            android:contentDescription="TXT智能分章节，开启后自动识别第X章作为目录锚点" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="无障碍设置"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:paddingVertical="8dp"
+            android:textColor="?android:attr/textColorPrimary" />
+
+        <CheckBox
+            android:id="@+id/cb_announce_paragraph"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:text="朗读段落号"
+            android:contentDescription="朗读段落号，开启后屏幕阅读器会播报当前段落编号" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="焦点粒度"
+            android:textSize="14sp"
+            android:paddingTop="16dp"
+            android:paddingBottom="4dp"
+            android:textColor="?android:attr/textColorPrimary"
+            android:labelFor="@+id/spinner_focus_scheme" />
+
+        <Spinner
+            android:id="@+id/spinner_focus_scheme"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:contentDescription="焦点粒度选择，按段落或按句子" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="默认编码"
+            android:textSize="14sp"
+            android:paddingTop="16dp"
+            android:paddingBottom="4dp"
+            android:textColor="?android:attr/textColorPrimary"
+            android:labelFor="@+id/spinner_default_encoding" />
+
+        <Spinner
+            android:id="@+id/spinner_default_encoding"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:contentDescription="默认编码选择" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="扫描文件夹"
+            android:textSize="14sp"
+            android:paddingTop="16dp"
+            android:paddingBottom="4dp"
+            android:textColor="?android:attr/textColorPrimary"
+            android:labelFor="@+id/et_scan_folder" />
+
+        <EditText
+            android:id="@+id/et_scan_folder"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="例如 /storage/emulated/0/Books"
+            android:minHeight="48dp"
+            android:inputType="text"
+            android:importantForAccessibility="yes" />
+
+        <CheckBox
+            android:id="@+id/cb_auto_import"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:text="自动导入新文件" />
+
+        <CheckBox
+            android:id="@+id/cb_auto_scroll"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:text="自动滚动" />
+
+        <!-- 关于 -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="关于"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:paddingVertical="8dp"
+            android:paddingTop="24dp"
+            android:textColor="?android:attr/textColorPrimary" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="版本信息"
+            android:textSize="16sp"
+            android:paddingTop="8dp"
+            android:textColor="?android:attr/textColorPrimary" />
+
+        <TextView
+            android:id="@+id/tv_version"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="版本号：1.0.2a3c"
+            android:textSize="14sp"
+            android:paddingBottom="4dp"
+            android:textColor="?android:attr/textColorSecondary"
+            android:contentDescription="版本号，1.0.2a3c" />
+
+        <Button
+            android:id="@+id/btn_show_eula"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="8dp"
+            android:text="用户协议"
+            android:contentDescription="查看用户协议" />
+
+        <Button
+            android:id="@+id/btn_qq_group"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="8dp"
+            android:text="加入QQ群"
+            android:contentDescription="加入 Aurora 开发社区QQ群" />
+
+        <Button
+            android:id="@+id/btn_save_settings"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="24dp"
+            android:text="保存设置" />
+
+    </LinearLayout>
+
+</ScrollView>
