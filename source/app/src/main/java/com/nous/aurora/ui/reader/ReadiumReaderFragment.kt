@@ -1,4 +1,4 @@
-﻿package com.nous.aurora.ui.reader
+package com.nous.aurora.ui.reader
 
 import android.os.Bundle
 import android.os.Handler
@@ -94,7 +94,6 @@ class ReadiumReaderFragment : Fragment(), ReaderFragmentContract,
         progressBar.layoutParams = lp
 
         val rv = object : FrameLayout(requireContext()) {
-
             override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
                 when (ev.action) {
                     MotionEvent.ACTION_DOWN -> {
@@ -116,7 +115,6 @@ class ReadiumReaderFragment : Fragment(), ReaderFragmentContract,
                 }
                 return false
             }
-
             override fun performClick(): Boolean {
                 postDelayed({
                     if (System.currentTimeMillis() - lastLinkClickTime > 400) {
@@ -126,7 +124,6 @@ class ReadiumReaderFragment : Fragment(), ReaderFragmentContract,
                 return true
             }
         }
-        // 硬件加速：减少 WebView 渲染卡顿
         rv.setLayerType(View.LAYER_TYPE_HARDWARE, null)
         rootView = rv
 
@@ -149,7 +146,6 @@ class ReadiumReaderFragment : Fragment(), ReaderFragmentContract,
             addView(container, FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
             addView(progressBar)
         }
-
         return rv
     }
 
@@ -177,27 +173,16 @@ class ReadiumReaderFragment : Fragment(), ReaderFragmentContract,
             progressBar.visibility = View.GONE
             observeProgress()
             applyBookmarkDecorations()
-            // 优化所有内部 WebView 的渲染和无障碍
             optimizeInternalWebViews()
         }
     }
 
-    /**
-     * 递归查找所有 WebView 并优化设置：
-     * - 开启硬件加速减少卡顿
-     * - 设置合适的缓存模式
-     * - 延迟后刷新无障碍树，确保跳转后内容完整可见
-     */
     private fun optimizeInternalWebViews() {
         container.postDelayed({
             findWebViews(container).forEach { wv ->
                 wv.setLayerType(View.LAYER_TYPE_HARDWARE, null)
                 wv.settings.apply {
-                    // 减少渲染开销
-                    setRenderPriority(android.webkit.WebSettings.RenderPriority.HIGH)
-                    // 允许文件访问（本地 EPUB 资源）
                     allowFileAccess = true
-                    // 不要自动加载图片以外的资源
                     blockNetworkLoads = true
                 }
             }
@@ -206,13 +191,8 @@ class ReadiumReaderFragment : Fragment(), ReaderFragmentContract,
 
     private fun findWebViews(view: View): List<WebView> {
         val result = mutableListOf<WebView>()
-        if (view is WebView) {
-            result.add(view)
-        } else if (view is ViewGroup) {
-            for (i in 0 until view.childCount) {
-                result.addAll(findWebViews(view.getChildAt(i)))
-            }
-        }
+        if (view is WebView) result.add(view)
+        else if (view is ViewGroup) for (i in 0 until view.childCount) result.addAll(findWebViews(view.getChildAt(i)))
         return result
     }
 
@@ -222,9 +202,7 @@ class ReadiumReaderFragment : Fragment(), ReaderFragmentContract,
             BookFormat.EPUB -> {
                 val factory = EpubNavigatorFactory(
                     publication,
-                    EpubNavigatorFactory.Configuration(
-                        defaults = EpubDefaults(pageMargins = 1.2)
-                    )
+                    EpubNavigatorFactory.Configuration(defaults = EpubDefaults(pageMargins = 1.2))
                 )
                 fm.fragmentFactory = factory.createFragmentFactory(initialLocator, null, EpubPreferences(), this)
                 val frag = fm.fragmentFactory.instantiate(requireActivity().classLoader, EpubNavigatorFragment::class.java.name)
@@ -272,29 +250,75 @@ class ReadiumReaderFragment : Fragment(), ReaderFragmentContract,
         }
     }
 
-    // ── 跳转后刷新无障碍，修复读屏只能读到部分内容的问题 ──
+    // ═══════════════════════════════════════
+    //  TOC 跳转：用 readingOrder 计算 progression
+    // ═══════════════════════════════════════
 
     override fun goToLocation(locationJson: String) {
-        parseLocator(locationJson)?.let { loc ->
+        val loc = parseLocator(locationJson)
+        if (loc != null) {
+            // 尝试直接用 locator 跳转
             navigator.go(loc)
-            // WebView 跳转后内容异步加载，延迟刷新无障碍树
-            rootView?.postDelayed({
-                rootView?.sendAccessibilityEvent(
-                    android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
-                )
-                // 再找一次 WebView，确保设置生效
-                optimizeInternalWebViews()
-            }, 800)
+        } else {
+            // 回退：从 tocIndex 算比例
+            val index = runCatching { JSONObject(locationJson).optInt("tocIndex", -1) }.getOrDefault(-1)
+            if (index >= 0) {
+                val toc = publication.tableOfContents
+                if (index < toc.size) {
+                    val href = toc[index].url().toString()
+                    val progress = findReadingOrderProgress(href)
+                    val locator = Locator(
+                        href = toc[index].url(),
+                        mediaType = MediaType.BINARY,
+                        title = toc[index].title ?: "",
+                        locations = Locator.Locations(totalProgression = progress)
+                    )
+                    navigator.go(locator)
+                }
+            }
         }
+        refreshAccessibility()
     }
 
     override fun goToProgress(percent: Int) {
         val progression = percent / 100.0
-        val href = publication.readingOrder.firstOrNull()?.url() ?: return
-        val locator = Locator(href, MediaType.BINARY, "", Locator.Locations(totalProgression = progression), Locator.Text())
-        navigator.go(locator)
+        val readingOrder = publication.readingOrder
+        if (readingOrder.isNotEmpty()) {
+            val index = ((readingOrder.size - 1) * progression).toInt().coerceIn(0, readingOrder.size - 1)
+            val locator = Locator(
+                href = readingOrder[index].url(),
+                mediaType = MediaType.BINARY,
+                title = "",
+                locations = Locator.Locations(totalProgression = progression)
+            )
+            navigator.go(locator)
+        }
+        refreshAccessibility()
+    }
+
+    /** 在 readingOrder 中查找 href，返回 0~1 的比例 */
+    private fun findReadingOrderProgress(href: String): Double {
+        val readingOrder = publication.readingOrder
+        if (readingOrder.isEmpty()) return 0.0
+        val idx = readingOrder.indexOfFirst { it.url().toString() == href }
+        if (idx >= 0) {
+            return (idx.toDouble() / readingOrder.size).coerceIn(0.0, 1.0)
+        }
+        // 模糊匹配：比较文件名
+        val fileName = href.substringAfterLast('/').substringBefore('#')
+        val idx2 = readingOrder.indexOfFirst {
+            it.url().toString().contains(fileName)
+        }
+        if (idx2 >= 0) {
+            return (idx2.toDouble() / readingOrder.size).coerceIn(0.0, 1.0)
+        }
+        return 0.0
+    }
+
+    private fun refreshAccessibility() {
         rootView?.postDelayed({
             rootView?.sendAccessibilityEvent(android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
+            optimizeInternalWebViews()
         }, 800)
     }
 
@@ -305,28 +329,35 @@ class ReadiumReaderFragment : Fragment(), ReaderFragmentContract,
         ((navigator.currentLocator.value.locations.totalProgression ?: 0.0) * 100).toInt().coerceIn(0, 100)
 
     override fun getTableOfContents(): List<ReaderFragmentContract.TocItem> =
-        publication.tableOfContents.flatMap { flattenToc(it, 0) }
+        publication.tableOfContents.mapIndexed { idx, link ->
+            // 保存 tocIndex 用于回退跳转
+            val locatorJson = JSONObject()
+                .put("href", link.url().toString())
+                .put("tocIndex", idx)
+                .put("title", link.title ?: "")
+                .toString()
+            ReaderFragmentContract.TocItem(link.title ?: "无标题", locatorJson, 0)
+        }
 
     override fun getTableOfContentsTree(): List<ReaderFragmentContract.TocTreeItem> =
-        publication.tableOfContents.map { convertToTocTree(it, 0) }
+        publication.tableOfContents.mapIndexed { idx, link ->
+            convertToTocTree(link, idx, 0)
+        }
 
     private fun convertToTocTree(
-        link: org.readium.r2.shared.publication.Link, depth: Int
+        link: org.readium.r2.shared.publication.Link, tocIndex: Int, depth: Int
     ): ReaderFragmentContract.TocTreeItem {
-        val title = link.title?.takeIf { it.isNotBlank() } ?: "无标题"
-        val locatorJson = Locator(link.url(), MediaType.BINARY, title, Locator.Locations(), Locator.Text()).toJSON().toString()
+        val locatorJson = JSONObject()
+            .put("href", link.url().toString())
+            .put("tocIndex", tocIndex)
+            .put("title", link.title ?: "")
+            .toString()
         return ReaderFragmentContract.TocTreeItem(
-            title = title, locationJson = locatorJson, depth = depth,
-            children = link.children.map { convertToTocTree(it, depth + 1) }
+            title = link.title ?: "无标题",
+            locationJson = locatorJson,
+            depth = depth,
+            children = link.children.map { convertToTocTree(it, tocIndex, depth + 1) }
         )
-    }
-
-    private fun flattenToc(
-        link: org.readium.r2.shared.publication.Link, depth: Int
-    ): List<ReaderFragmentContract.TocItem> {
-        val locator = Locator(link.url(), MediaType.BINARY, link.title ?: "无标题", Locator.Locations(), Locator.Text())
-        return listOf(ReaderFragmentContract.TocItem(link.title ?: "无标题", locator.toJSON().toString(), depth)) +
-                link.children.flatMap { flattenToc(it, depth + 1) }
     }
 
     override suspend fun search(query: String): List<ReaderFragmentContract.SearchResult> = emptyList()
